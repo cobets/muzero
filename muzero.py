@@ -550,7 +550,7 @@ class ReplayBuffer(object):
 
     def sample_game(self) -> Game:
         # Sample game from buffer either uniformly or according to some priority.
-        return numpy.random.choice(self.buffer)
+        return numpy.random.choice(self.buffer.copy())
 
     def sample_position(self, game) -> int:
         # Sample position from game either uniformly or according to some priority.
