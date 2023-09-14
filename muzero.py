@@ -21,6 +21,10 @@ import torch.nn.functional as F
 import torch.optim as optim
 import threading
 
+# https://stackoverflow.com/questions/5061582/setting-stacksize-in-a-python-script
+import sys
+sys.setrecursionlimit(10**6)
+threading.stack_size(2**26)
 
 device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
 
@@ -1055,9 +1059,14 @@ def softmax_sample(distribution, temperature: float):
     if temperature == 0:
         temperature = 1
     distribution = numpy.array(distribution) ** (1 / temperature)
-    p_sum = distribution.sum()
-    sample_temp = distribution / p_sum
-    return 0, numpy.argmax(numpy.random.multinomial(1, sample_temp, 1))
+#   https://github.com/Zeta36/muzero/issues/5
+#   p_sum = distribution.sum()
+    p_sum = distribution[:, 0].sum()
+#   sample_temp = distribution / p_sum
+    sample_temp = distribution[:, 0] / p_sum
+#   return 0, numpy.argmax(numpy.random.multinomial(1, sample_temp, 1))
+    action = distribution[int(numpy.argmax(numpy.random.multinomial(1, sample_temp, 1)))][1]
+    return 0, int(action)
 
 
 def launch_job(f, *args):
