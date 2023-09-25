@@ -429,11 +429,16 @@ def launch_job(f, *args):
 
 
 def main():
+    if torch.cuda.is_available():
+        multiprocessing.set_start_method('spawn')
+        device = 'cuda:0'
+    else:
+        device = 'cpu'
+    print(device)
+
     config = make_connect4_config()
     vs_random_once = random_vs_random(config)
     print('random_vs_random = ', sorted(vs_random_once.items()), end='\n')
-    device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
-    print(device)
     network = muzero(config, device)
     print(network)
 
