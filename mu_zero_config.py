@@ -90,7 +90,7 @@ def make_board_game_config(action_space_size: int, max_moves: int,
         num_simulations=10,
         batch_size=64,
         td_steps=max_moves,  # Always use Monte Carlo return.
-        num_actors=10 if torch.cuda.is_available() else 2,
+        num_actors=2,
         lr_init=lr_init,
         lr_decay_steps=400e3,
         visit_softmax_temperature_fn=visit_softmax_temperature,
