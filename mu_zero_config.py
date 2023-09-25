@@ -51,10 +51,11 @@ class MuZeroConfig(object):
         ### Training
         self.training_steps = int(1e6)
         self.checkpoint_interval = int(100)
-        self.window_size = 1000  # cobets  int(1e6)
+        self.window_size = int(1e6)
         self.batch_size = batch_size
         self.num_unroll_steps = 4
         self.td_steps = td_steps
+        self.checkpoint_plays = int(10)
 
         self.weight_decay = 1e-4
         self.momentum = 0.9
@@ -68,15 +69,16 @@ class MuZeroConfig(object):
         return Game(self.action_space_size, self.discount)
 
 
+def visit_softmax_temperature(num_moves, training_steps):
+    if num_moves < 30:
+        return 1.0
+    else:
+        return 0.0  # Play according to the max.
+
+
 def make_board_game_config(action_space_size: int, max_moves: int,
                            dirichlet_alpha: float,
                            lr_init: float) -> MuZeroConfig:
-    def visit_softmax_temperature(num_moves, training_steps):
-        if num_moves < 30:
-            return 1.0
-        else:
-            return 0.0  # Play according to the max.
-
     return MuZeroConfig(
         action_space_size=action_space_size,
         max_moves=max_moves,
@@ -85,7 +87,7 @@ def make_board_game_config(action_space_size: int, max_moves: int,
         num_simulations=10,
         batch_size=64,
         td_steps=max_moves,  # Always use Monte Carlo return.
-        num_actors=1,
+        num_actors=2,
         lr_init=lr_init,
         lr_decay_steps=400e3,
         visit_softmax_temperature_fn=visit_softmax_temperature,

@@ -9,14 +9,17 @@ from __future__ import division
 from __future__ import print_function
 
 import math
+import queue
 import signal
 from typing import List
+import multiprocessing
 
 import numpy
 import torch
 import torch.optim as optim
-import threading
+from torch.utils.tensorboard import SummaryWriter
 
+import shared_storage
 from action import Action
 from action_history import ActionHistory
 from environment import Winner, Player
@@ -38,12 +41,12 @@ from shared_storage import SharedStorage
 ################################################################################
 
 # Battle against random agents
-def vs_random(network, config, n=100):
+def vs_random(network, config):
     results = {}
-    for i in range(n):
+    for i in range(config.checkpoint_plays):
         first_turn = i % 2 == 0
         turn = first_turn
-        game = config.new_game()
+        game = Game(config.action_space_size, config.discount)
         r = 0
         while not game.terminal():
             if turn:
@@ -68,12 +71,12 @@ def vs_random(network, config, n=100):
     return results
 
 
-def random_vs_random(config, n=100):
+def random_vs_random(config):
     results = {}
-    for i in range(n):
+    for i in range(config.checkpoint_plays):
         first_turn = i % 2 == 0
         turn = first_turn
-        game = config.new_game()
+        game = Game(config.action_space_size, config.discount)
         r = 0
         while not game.terminal():
             action = numpy.random.choice(game.legal_actions())
@@ -89,12 +92,12 @@ def random_vs_random(config, n=100):
     return results
 
 
-def latest_vs_older(last, old, config, n=100):
+def latest_vs_older(last, old, config):
     results = {}
-    for i in range(n):
+    for i in range(config.checkpoint_plays):
         first_turn = i % 2 == 0
         turn = first_turn
-        game = config.new_game()
+        game = Game(config.action_space_size, config.discount)
         r = 0
         while not game.terminal():
             if turn:
@@ -134,19 +137,23 @@ def muzero(config: MuZeroConfig, device):
     storage = SharedStorage(device)
     replay_buffer = ReplayBuffer(config)
     # stop event
-    stop_event = threading.Event()
+    stop_event = multiprocessing.Event()
     signal.signal(signal.SIGINT, lambda sig, frame: stop_event.set())
-    # Start n concurrent actor threads
-    threads = list()
+    # Start n concurrent actor processes
+    processes = list()
+    network_queues = list()
+    game_queue = multiprocessing.Queue()
     for _ in range(config.num_actors):
-        t = threading.Thread(target=launch_job, args=(run_selfplay, config, storage, replay_buffer, stop_event))
-        threads.append(t)
+        q = multiprocessing.Queue()
+        network_queues.append(q)
+        p = multiprocessing.Process(target=run_selfplay, args=(config, stop_event, q, game_queue))
+        processes.append(p)
 
     # Start all threads
-    for x in threads:
+    for x in processes:
         x.start()
 
-    train_network(config, storage, replay_buffer, device, stop_event)
+    train_network(config, storage, replay_buffer, device, stop_event, network_queues, game_queue)
 
     return storage.latest_network()
 
@@ -158,20 +165,30 @@ def muzero(config: MuZeroConfig, device):
 # Each self-play job is independent of all others; it takes the latest network
 # snapshot, produces a game and makes it available to the training job by
 # writing it to a shared replay buffer.
-def run_selfplay(config: MuZeroConfig, storage: SharedStorage, replay_buffer: ReplayBuffer, stop_event):
+def run_selfplay(config: MuZeroConfig, stop_event,
+                 network_queue: multiprocessing.Queue,
+                 game_queue: multiprocessing.Queue):
+    wait_for_network = True
+
     while True:
         if stop_event.is_set():
             break
-        network = storage.latest_network()
+
+        try:
+            network = network_queue.get(wait_for_network)
+            wait_for_network = False
+        except queue.Empty:
+            pass
+
         game = play_game(config, network)
-        replay_buffer.save_game(game)
+        game_queue.put(game)
 
 
 # Each game is produced by starting at the initial board position, then
 # repeatedly executing a Monte Carlo Tree Search to generate moves until the end
 # of the game is reached.
 def play_game(config: MuZeroConfig, network: Network) -> Game:
-    game = config.new_game()
+    game = Game(config.action_space_size, config.discount)
     while not game.terminal() and len(game.history) < config.max_moves:
         # At the root of the search tree we use the representation function to
         # obtain a hidden state given the current observation.
@@ -214,7 +231,7 @@ def run_mcts(config: MuZeroConfig, root: Node, action_history: ActionHistory, ne
                                                      history.last_action())
         expand_node(node, history.to_play(), history.action_space(), network_output)
 
-        backpropagate(search_path, network_output.value, history.to_play(),
+        backpropagate(search_path, network_output.value.item(), history.to_play(),
                       config.discount, min_max_stats)
 
 
@@ -290,9 +307,25 @@ def add_exploration_noise(config: MuZeroConfig, node: Node):
 ##################################
 # Part 2: Training
 
+def save_network(storage: SharedStorage, step: int, network: Network, network_queues: list):
+    storage.save_network(step, network)
+
+    for q in network_queues:
+        q.put(network)
+
+
 def train_network(config: MuZeroConfig, storage: SharedStorage,
-                  replay_buffer: ReplayBuffer, device, stop_event):
+                  replay_buffer: ReplayBuffer, device, stop_event,
+                  network_queues: list, game_queue: multiprocessing.Queue):
+
+    un = shared_storage.make_uniform_network(device)
+    for q in network_queues:
+        q.put(un)
+
+    writer = SummaryWriter()
+
     network = Network(config.action_space_size, device).to(device)
+    replay_buffer.save_game(game_queue.get())
 
     while True:
         if stop_event.is_set():
@@ -301,28 +334,40 @@ def train_network(config: MuZeroConfig, storage: SharedStorage,
         optimizer = optim.SGD(network.parameters(), lr=0.01, weight_decay=config.lr_decay_rate,
                               momentum=config.momentum)
 
-        while not len(replay_buffer.buffer) > 0:
-            if stop_event.is_set():
-                break
-
         for i in range(config.training_steps):
             if stop_event.is_set():
                 break
 
             if i % config.checkpoint_interval == 0 and i > 0:
-                storage.save_network(i, network)
+                save_network(storage, i, network, network_queues)
                 # Test against random agent
                 vs_random_once = vs_random(network, config)
-                print('network_vs_random = ', sorted(vs_random_once.items()), end='\n')
+                print(f'iter = {i} network_vs_random = {sorted(vs_random_once.items())}')
                 vs_older = latest_vs_older(storage.latest_network(), storage.old_network(), config)
-                print('lastnet_vs_older = ', sorted(vs_older.items()), end='\n')
-                # print(hp.heap())
+                print(f'iter = {i} lastnet_vs_older = {sorted(vs_older.items())}')
+                writer.add_scalars(
+                    'train/score',
+                    {
+                        'network win vs random': vs_random_once[-1],
+                        'last network win vs prev': vs_older[-1]
+                    },
+                    i
+                )
+
+            while True:
+                try:
+                    replay_buffer.save_game(game_queue.get_nowait())
+                except queue.Empty:
+                    break
 
             batch = replay_buffer.sample_batch(config.num_unroll_steps, config.td_steps)
-            update_weights(batch, network, optimizer, device)
+            p_loss, v_loss = update_weights(batch, network, optimizer, device)
+            writer.add_scalar('train/p_loss', p_loss, i)
+            writer.add_scalar('train/v_loss', v_loss, i)
+            writer.add_scalar('train/replay size', len(replay_buffer.buffer), i)
 
         if not stop_event.is_set():
-            storage.save_network(config.training_steps, network)
+            save_network(storage, config.training_steps, network, network_queues)
 
 
 def update_weights(batch, network, optimizer, device):
@@ -353,7 +398,8 @@ def update_weights(batch, network, optimizer, device):
     total_loss.backward()
     optimizer.step()
     network.steps += 1
-    print('p_loss %f v_loss %f' % (p_loss / len(batch), v_loss / len(batch)))
+
+    return p_loss / len(batch), v_loss / len(batch)
 
 
 # End Training
