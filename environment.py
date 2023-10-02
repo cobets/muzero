@@ -3,6 +3,7 @@ from __future__ import division, absolute_import, print_function
 import enum
 
 import numpy
+import numpy as np
 
 # noinspection PyArgumentList
 Winner = enum.Enum("Winner", "black white draw")
@@ -21,11 +22,14 @@ class Environment(object):
         self.resigned = False
 
     def reset(self):
-        self.board = []
-        for i in range(6):
-            self.board.append([])
-            for j in range(7):  # pylint: disable=unused-variable
-                self.board[i].append(' ')
+        self.board = np.array([
+            [' ', ' ', ' ', ' ', ' ', ' ', ' '],
+            [' ', ' ', ' ', ' ', ' ', ' ', ' '],
+            [' ', ' ', ' ', ' ', ' ', ' ', ' '],
+            [' ', ' ', ' ', ' ', ' ', ' ', ' '],
+            [' ', ' ', ' ', ' ', ' ', ' ', ' '],
+            [' ', ' ', ' ', ' ', ' ', ' ', ' ']
+        ])
         self.turn = 0
         self.done = False
         self.winner = None
@@ -85,22 +89,9 @@ class Environment(object):
 
         return r
 
-    def legal_moves(self):
-        legal = [0, 0, 0, 0, 0, 0, 0]
-        for j in range(7):
-            for i in range(6):
-                if self.board[i][j] == ' ':
-                    legal[j] = 1
-                    break
-        return legal
-
     def legal_actions(self):
-        legal = []
-        for j in range(7):
-            for i in range(6):
-                if self.board[i][j] == ' ':
-                    legal.append(j)
-                    break
+        a = np.sum(np.where(self.board == ' ', 0, 1), axis=0)
+        legal = np.argwhere(a < 6).flatten()
         return legal
 
     def check_for_fours(self):
@@ -208,20 +199,8 @@ class Environment(object):
         return four_in_a_row
 
     def black_and_white_plane(self):
-        board_white = numpy.copy(self.board)
-        board_black = numpy.copy(self.board)
-        for i in range(6):
-            for j in range(7):
-                if self.board[i][j] == ' ':
-                    board_white[i][j] = 0
-                    board_black[i][j] = 0
-                elif self.board[i][j] == 'X':
-                    board_white[i][j] = 1
-                    board_black[i][j] = 0
-                else:
-                    board_white[i][j] = 0
-                    board_black[i][j] = 1
-
+        board_white = numpy.where(self.board == 'X', 1, 0)
+        board_black = numpy.where(self.board == 'O', 1, 0)
         return numpy.array(board_white), numpy.array(board_black)
 
     def render(self):
