@@ -82,3 +82,6 @@ class Game(object):
 
     def action_history(self) -> ActionHistory:
         return ActionHistory(self.history, self.action_space_size)
+
+    def winner(self):
+        return self.environment.winner

@@ -9,7 +9,6 @@ from torch import nn as nn
 
 from action import Action
 from dynamics import Dynamics
-from mu_zero_config import num_filters
 from prediction import Prediction
 from representation import Representation
 
@@ -23,24 +22,26 @@ class NetworkOutput(typing.NamedTuple):
 
 class Network(nn.Module):
 
-    def __init__(self, action_space_size: int, device):
+    def __init__(self, action_space_size: int, device, num_filters, num_blocks, width, height):
         super().__init__()
         self.steps = 0
         self.action_space_size = action_space_size
-        input_shape = (2, 6, 7)
+        input_shape = (2, height, width)
         rp_shape = (num_filters, *input_shape[1:])
         self.device = device
-        self.representation = Representation(input_shape).to(device)
-        self.prediction = Prediction(action_space_size).to(device)
-        self.dynamics = Dynamics(rp_shape, (2, 6, 7)).to(device)
+        self.representation = Representation(input_shape, num_filters, num_blocks).to(device)
+        self.prediction = Prediction(action_space_size, num_filters, width, height).to(device)
+        self.dynamics = Dynamics(rp_shape, (2, height, width), num_filters, num_blocks).to(device)
         self.eval()
+        self.width = width
+        self.height = height
 
     def predict_initial_inference(self, x):
         assert x.ndim in (3, 4)
-        assert x.shape == (2, 6, 7) or x.shape[1:] == (2, 6, 7)
+        assert x.shape == (2, self.height, self.width) or x.shape[1:] == (2, self.height, self.width)
         orig_x = x
         if x.ndim == 3:
-            x = x.reshape(1, 2, 6, 7)
+            x = x.reshape(1, 2, self.height, self.width)
 
         x = torch.Tensor(x).to(self.device)
         h = self.representation(x)
@@ -54,9 +55,9 @@ class Network(nn.Module):
     def predict_recurrent_inference(self, x, a):
 
         if x.ndim == 3:
-            x = x.reshape(1, 2, 6, 7)
+            x = x.reshape(1, 2, self.height, self.width)
 
-        a = numpy.full((1, 2, 6, 7), a)
+        a = numpy.full((1, 2, self.height, self.width), a)
 
         g = self.dynamics(x, torch.Tensor(a).to(self.device))
         policy, value = self.prediction(g)

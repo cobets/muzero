@@ -4,14 +4,13 @@ from torch import nn as nn
 from torch.nn import functional as F
 
 from conv import Conv
-from mu_zero_config import num_filters, num_blocks
 from residual_block import ResidualBlock
 
 
 class Representation(nn.Module):
     ''' Conversion from observation to inner abstract state '''
 
-    def __init__(self, input_shape):
+    def __init__(self, input_shape, num_filters, num_blocks):
         super().__init__()
         self.input_shape = input_shape
         self.board_size = self.input_shape[1] * self.input_shape[2]

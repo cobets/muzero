@@ -5,14 +5,13 @@ from torch import nn as nn
 from torch.nn import functional as F
 
 from conv import Conv
-from mu_zero_config import num_filters
 
 
 class Prediction(nn.Module):
     # Policy and value prediction from inner abstract state
-    def __init__(self, action_shape):
+    def __init__(self, action_shape, num_filters, width, height):
         super().__init__()
-        self.board_size = 42
+        self.board_size = width * height
         self.action_size = action_shape
 
         self.conv_p1 = Conv(num_filters, 4, 1, bn=True)

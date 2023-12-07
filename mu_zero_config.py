@@ -1,17 +1,9 @@
 from __future__ import division, absolute_import, print_function
-
 import collections
 from typing import Optional
 
 import torch
-
-from game import Game
-
 KnownBounds = collections.namedtuple('KnownBounds', ['min', 'max'])
-
-
-num_filters = 2
-num_blocks = 8
 
 
 class MuZeroConfig(object):
@@ -27,7 +19,11 @@ class MuZeroConfig(object):
                  lr_init: float,
                  lr_decay_steps: float,
                  visit_softmax_temperature_fn,
-                 known_bounds: Optional[KnownBounds] = None):
+                 game_class,
+                 width,
+                 height,
+                 known_bounds: Optional[KnownBounds] = None
+                 ):
         ### Self-Play
         self.action_space_size = action_space_size
         self.num_actors = num_actors
@@ -68,8 +64,16 @@ class MuZeroConfig(object):
         self.lr_decay_rate = 0.1
         self.lr_decay_steps = lr_decay_steps
 
+        self.num_filters = 2
+        self.num_blocks = 8
+
+        self.game_class = game_class
+
+        self.width = width
+        self.height = height
+
     def new_game(self):
-        return Game(self.action_space_size, self.discount)
+        return self.game_class(self.action_space_size, self.discount)
 
 
 def visit_softmax_temperature(num_moves, training_steps):
@@ -81,7 +85,11 @@ def visit_softmax_temperature(num_moves, training_steps):
 
 def make_board_game_config(action_space_size: int, max_moves: int,
                            dirichlet_alpha: float,
-                           lr_init: float) -> MuZeroConfig:
+                           lr_init: float,
+                           game_class,
+                           width,
+                           height,
+                           ) -> MuZeroConfig:
     return MuZeroConfig(
         action_space_size=action_space_size,
         max_moves=max_moves,
@@ -94,9 +102,8 @@ def make_board_game_config(action_space_size: int, max_moves: int,
         lr_init=lr_init,
         lr_decay_steps=400e3,
         visit_softmax_temperature_fn=visit_softmax_temperature,
-        known_bounds=KnownBounds(-1, 1))
-
-
-def make_connect4_config() -> MuZeroConfig:
-    return make_board_game_config(
-        action_space_size=7, max_moves=20, dirichlet_alpha=0.03, lr_init=0.01)
+        known_bounds=KnownBounds(-1, 1),
+        game_class=game_class,
+        width=width,
+        height=height
+    )

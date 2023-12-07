@@ -4,14 +4,13 @@ import torch
 from torch import nn as nn
 
 from conv import Conv
-from mu_zero_config import num_filters, num_blocks
 from residual_block import ResidualBlock
 
 
 class Dynamics(nn.Module):
     '''Abstruct state transition'''
 
-    def __init__(self, rp_shape, act_shape):
+    def __init__(self, rp_shape, act_shape, num_filters, num_blocks):
         super().__init__()
         self.rp_shape = rp_shape
         self.layer0 = Conv(rp_shape[0] + act_shape[0], num_filters, 3, bn=True)

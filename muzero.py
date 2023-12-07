@@ -19,13 +19,13 @@ import torch
 import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
 
-import shared_storage
 from action import Action
 from action_history import ActionHistory
 from environment import Winner, Player
-from game import Game
+from connect4_game import Game as Connect4Game
+from dots_game import Game as DotsGame
 from min_max_stats import MinMaxStats
-from mu_zero_config import MuZeroConfig, make_connect4_config
+from mu_zero_config import MuZeroConfig, make_board_game_config
 from network import Network, NetworkOutput
 from node import Node
 from replay_buffer import ReplayBuffer
@@ -46,7 +46,7 @@ def vs_random(network, config):
     for i in range(config.checkpoint_plays):
         first_turn = i % 2 == 0
         turn = first_turn
-        game = Game(config.action_space_size, config.discount)
+        game = config.new_game()
         r = 0
         while not game.terminal():
             if turn:
@@ -61,11 +61,11 @@ def vs_random(network, config):
                 action = numpy.random.choice(game.legal_actions())
             game.apply(action)
             turn = not turn
-        if ((game.environment.winner == Winner.white and first_turn)
-                or (game.environment.winner == Winner.black and not first_turn)):
+        if ((game.winner() == Winner.white and first_turn)
+                or (game.winner() == Winner.black and not first_turn)):
             r = 1
-        elif ((game.environment.winner == Winner.black and first_turn)
-              or (game.environment.winner == Winner.white and not first_turn)):
+        elif ((game.winner() == Winner.black and first_turn)
+              or (game.winner() == Winner.white and not first_turn)):
             r = -1
         results[r] = results.get(r, 0) + 1
     return results
@@ -76,17 +76,17 @@ def random_vs_random(config):
     for i in range(config.checkpoint_plays):
         first_turn = i % 2 == 0
         turn = first_turn
-        game = Game(config.action_space_size, config.discount)
+        game = config.new_game()
         r = 0
         while not game.terminal():
             action = numpy.random.choice(game.legal_actions())
             game.apply(action)
             turn = not turn
-        if ((game.environment.winner == Winner.white and first_turn)
-                or (game.environment.winner == Winner.black and not first_turn)):
+        if ((game.winner() == Winner.white and first_turn)
+                or (game.winner() == Winner.black and not first_turn)):
             r = 1
-        elif ((game.environment.winner == Winner.black and first_turn)
-              or (game.environment.winner == Winner.white and not first_turn)):
+        elif ((game.winner() == Winner.black and first_turn)
+              or (game.winner() == Winner.white and not first_turn)):
             r = -1
         results[r] = results.get(r, 0) + 1
     return results
@@ -97,7 +97,7 @@ def latest_vs_older(last, old, config):
     for i in range(config.checkpoint_plays):
         first_turn = i % 2 == 0
         turn = first_turn
-        game = Game(config.action_space_size, config.discount)
+        game = config.new_game()
         r = 0
         while not game.terminal():
             if turn:
@@ -118,11 +118,11 @@ def latest_vs_older(last, old, config):
                 action = select_action(config, len(game.history), root, old)
             game.apply(action)
             turn = not turn
-        if ((game.environment.winner == Winner.white and first_turn)
-                or (game.environment.winner == Winner.black and not first_turn)):
+        if ((game.winner() == Winner.white and first_turn)
+                or (game.winner() == Winner.black and not first_turn)):
             r = 1
-        elif ((game.environment.winner == Winner.black and first_turn)
-              or (game.environment.winner == Winner.white and not first_turn)):
+        elif ((game.winner() == Winner.black and first_turn)
+              or (game.winner() == Winner.white and not first_turn)):
             r = -1
         results[r] = results.get(r, 0) + 1
     return results
@@ -134,7 +134,14 @@ def latest_vs_older(last, old, config):
 # from the training to the self-play, and the finished games from the self-play
 # to the training.
 def muzero(config: MuZeroConfig, device):
-    storage = SharedStorage(device)
+    storage = SharedStorage(
+        device,
+        config.action_space_size,
+        config.num_filters,
+        config.num_blocks,
+        config.width,
+        config.height
+    )
     replay_buffer = ReplayBuffer(config)
     # stop event
     stop_event = multiprocessing.Event()
@@ -187,8 +194,8 @@ def run_selfplay(config: MuZeroConfig, stop_event,
 # Each game is produced by starting at the initial board position, then
 # repeatedly executing a Monte Carlo Tree Search to generate moves until the end
 # of the game is reached.
-def play_game(config: MuZeroConfig, network: Network) -> Game:
-    game = Game(config.action_space_size, config.discount)
+def play_game(config: MuZeroConfig, network: Network):
+    game = config.new_game()
     while not game.terminal() and len(game.history) < config.max_moves:
         # At the root of the search tree we use the representation function to
         # obtain a hidden state given the current observation.
@@ -318,13 +325,21 @@ def train_network(config: MuZeroConfig, storage: SharedStorage,
                   replay_buffer: ReplayBuffer, device, stop_event,
                   network_queues: list, game_queue: multiprocessing.Queue):
 
-    un = shared_storage.make_uniform_network(device)
+    un = storage.make_uniform_network()
     for q in network_queues:
         q.put(un)
 
     writer = SummaryWriter()
 
-    network = Network(config.action_space_size, device).to(device)
+    network = Network(
+        config.action_space_size,
+        device,
+        config.num_filters,
+        config.num_blocks,
+        config.width,
+        config.height
+    ).to(device)
+
     replay_buffer.save_game(game_queue.get())
 
     while True:
@@ -348,8 +363,8 @@ def train_network(config: MuZeroConfig, storage: SharedStorage,
                 writer.add_scalars(
                     'train/score',
                     {
-                        'network win vs random': vs_random_once[-1],
-                        'last network win vs prev': vs_older[-1]
+                        'network win vs random': vs_random_once.get(-1, 0),
+                        'last network win vs prev': vs_older.get(-1, 0)
                     },
                     i
                 )
@@ -428,6 +443,29 @@ def launch_job(f, *args):
     f(*args)
 
 
+def make_connect4_config() -> MuZeroConfig:
+    return make_board_game_config(
+        action_space_size=7,
+        max_moves=20,
+        dirichlet_alpha=0.03,
+        lr_init=0.01,
+        game_class=Connect4Game,
+        width=7,
+        height=6
+    )
+
+
+def make_dots_config() -> MuZeroConfig:
+    return make_board_game_config(
+        action_space_size=64,
+        max_moves=50,
+        dirichlet_alpha=0.03,
+        lr_init=0.001,
+        game_class=DotsGame,
+        width=8,
+        height=8
+    )
+
 def main():
     if torch.cuda.is_available():
         multiprocessing.set_start_method('spawn')
@@ -436,7 +474,8 @@ def main():
         device = 'cpu'
     print(device)
 
-    config = make_connect4_config()
+    # config = make_connect4_config()
+    config = make_dots_config()
     vs_random_once = random_vs_random(config)
     print('random_vs_random = ', sorted(vs_random_once.items()), end='\n')
     network = muzero(config, device)

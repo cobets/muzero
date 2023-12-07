@@ -2,7 +2,6 @@ from __future__ import division, absolute_import, print_function
 
 import numpy
 
-from game import Game
 from mu_zero_config import MuZeroConfig
 
 
