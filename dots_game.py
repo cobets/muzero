@@ -86,8 +86,8 @@ class Game(object):
     def winner(self):
         reward = self.environment.terminal_reward()
         if reward > 0:
-            return Winner.black
-        elif reward < 0:
             return Winner.white
+        elif reward < 0:
+            return Winner.black
         else:
             return Winner.draw
