@@ -8,7 +8,7 @@ from action import Action
 from action_history import ActionHistory
 from node import Node
 from dotsenv import DotsEnv, BLACK
-from environment import Winner
+from environment import Winner, Player
 
 class Game(object):
     """A single episode of interaction with the environment."""
@@ -78,7 +78,10 @@ class Game(object):
         return targets
 
     def to_play(self):
-        return self.environment.player
+        if self.environment.player == BLACK:
+            return Player.white
+        else:
+            return Player.black
 
     def action_history(self) -> ActionHistory:
         return ActionHistory(self.history, self.action_space_size)

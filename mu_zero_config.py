@@ -54,7 +54,7 @@ class MuZeroConfig(object):
         self.batch_size = batch_size
         self.num_unroll_steps = 4
         self.td_steps = td_steps
-        self.checkpoint_plays = int(10)
+        self.checkpoint_plays = int(100)
 
         self.weight_decay = 1e-4
         self.momentum = 0.9
