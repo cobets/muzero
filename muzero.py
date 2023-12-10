@@ -342,47 +342,43 @@ def train_network(config: MuZeroConfig, storage: SharedStorage,
 
     replay_buffer.save_game(game_queue.get())
 
-    while True:
+    optimizer = optim.SGD(network.parameters(), lr=0.01, weight_decay=config.lr_decay_rate,
+                          momentum=config.momentum)
+
+    for i in range(config.training_steps):
         if stop_event.is_set():
             break
 
-        optimizer = optim.SGD(network.parameters(), lr=0.01, weight_decay=config.lr_decay_rate,
-                              momentum=config.momentum)
+        if i % config.checkpoint_interval == 0 and i > 0:
+            save_network(storage, i, network, network_queues)
+            # Test against random agent
+            vs_random_once = vs_random(network, config)
+            print(f'iter = {i} network_vs_random = {sorted(vs_random_once.items())}')
+            vs_older = latest_vs_older(storage.latest_network(), storage.old_network(), config)
+            print(f'iter = {i} lastnet_vs_older = {sorted(vs_older.items())}')
+            writer.add_scalars(
+                'train/score',
+                {
+                    'network win vs random': vs_random_once.get(-1, 0),
+                    'last network win vs prev': vs_older.get(-1, 0)
+                },
+                i
+            )
 
-        for i in range(config.training_steps):
-            if stop_event.is_set():
+        while True:
+            try:
+                replay_buffer.save_game(game_queue.get_nowait())
+            except queue.Empty:
                 break
 
-            if i % config.checkpoint_interval == 0 and i > 0:
-                save_network(storage, i, network, network_queues)
-                # Test against random agent
-                vs_random_once = vs_random(network, config)
-                print(f'iter = {i} network_vs_random = {sorted(vs_random_once.items())}')
-                vs_older = latest_vs_older(storage.latest_network(), storage.old_network(), config)
-                print(f'iter = {i} lastnet_vs_older = {sorted(vs_older.items())}')
-                writer.add_scalars(
-                    'train/score',
-                    {
-                        'network win vs random': vs_random_once.get(-1, 0),
-                        'last network win vs prev': vs_older.get(-1, 0)
-                    },
-                    i
-                )
+        batch = replay_buffer.sample_batch(config.num_unroll_steps, config.td_steps)
+        p_loss, v_loss = update_weights(batch, network, optimizer, device)
+        writer.add_scalar('train/p_loss', p_loss, i)
+        writer.add_scalar('train/v_loss', v_loss, i)
+        writer.add_scalar('train/replay size', len(replay_buffer.buffer), i)
 
-            while True:
-                try:
-                    replay_buffer.save_game(game_queue.get_nowait())
-                except queue.Empty:
-                    break
-
-            batch = replay_buffer.sample_batch(config.num_unroll_steps, config.td_steps)
-            p_loss, v_loss = update_weights(batch, network, optimizer, device)
-            writer.add_scalar('train/p_loss', p_loss, i)
-            writer.add_scalar('train/v_loss', v_loss, i)
-            writer.add_scalar('train/replay size', len(replay_buffer.buffer), i)
-
-        if not stop_event.is_set():
-            save_network(storage, config.training_steps, network, network_queues)
+    if not stop_event.is_set():
+        save_network(storage, config.training_steps, network, network_queues)
 
 
 def update_weights(batch, network, optimizer, device):
@@ -465,6 +461,7 @@ def make_dots_config() -> MuZeroConfig:
         width=8,
         height=8
     )
+
 
 def main():
     if torch.cuda.is_available():
